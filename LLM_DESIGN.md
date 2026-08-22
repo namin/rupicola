@@ -3,6 +3,11 @@
 Status: proposed product architecture v1.  The companion experimental protocol
 is in [`LLM_EVAL.md`](LLM_EVAL.md).
 
+Implementation status: the read-only Phase 1 diagnostic vertical slice is in
+[`tools/rupicola_llm`](tools/rupicola_llm/README.md).  It captures and classifies
+live residual goals through `coqidetop` and ranks local source evidence;
+model-driven repair begins in Phase 2.
+
 ## 1. Product decision
 
 Build the LLM integration as an external sidecar named `rupicola-llm`, not as

@@ -210,3 +210,6 @@ Makefile.coq.lib.conf
 /src/Rupicola/Examples/Utf8/benchmark-utf8_decode-rupicola-gcc-11.1.0-O3-fno-tree-vectorize
 /src/Rupicola/Examples/Utf8/benchmark-utf8_decode-rupicola-gcc-11.1.0-O3-fno-tree-vectorize-march=native
 /src/Rupicola/Examples/Utf8/benchmark-utf8_decode-rupicola-gcc-11.1.0-O3-march=native
+__pycache__/
+*.py[cod]
+/.rupicola/
