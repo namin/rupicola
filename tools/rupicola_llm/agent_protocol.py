@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -93,6 +93,7 @@ class ProviderMetadata:
     model: str | None
     remote: bool
     model_invoked: bool
+    configuration: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +101,7 @@ class ProviderMetadata:
             "model": self.model,
             "remote": self.remote,
             "model_invoked": self.model_invoked,
+            "configuration": self.configuration,
         }
 
 
@@ -114,6 +116,15 @@ class AgentProvider(Protocol):
         ...
 
     def next_action(self, observation: Mapping[str, Any]) -> AgentAction:
+        ...
+
+    def take_audit_record(self) -> Mapping[str, Any] | None:
+        ...
+
+    def context_manifest(self) -> Mapping[str, Any] | None:
+        ...
+
+    def usage_summary(self) -> Mapping[str, Any] | None:
         ...
 
 
@@ -170,7 +181,9 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "propose_patch",
-        "Submit one complete unified diff against the unchanged project source.",
+        "Submit one minimal complete unified diff against the unchanged project "
+        "source. Hunk counts and unchanged context must be exact; do not include "
+        "cosmetic edits.",
         {
             "type": "object",
             "properties": {
@@ -360,6 +373,7 @@ class ScriptedProvider:
         self._index = 0
         self.context: Mapping[str, Any] | None = None
         self.tools: tuple[ToolSpec, ...] = ()
+        self._last_audit: dict[str, Any] | None = None
 
     @classmethod
     def load(cls, path: Path) -> "ScriptedProvider":
@@ -410,8 +424,23 @@ class ScriptedProvider:
             raise ProviderExhausted("scripted provider has no actions remaining")
         raw = dict(self._actions[self._index])
         self._index += 1
+        self._last_audit = {
+            "provider": self.metadata.provider,
+            "script_action": self._index,
+        }
         raw = self._expand_patch_file(raw)
         return parse_action(raw)
+
+    def take_audit_record(self) -> Mapping[str, Any] | None:
+        record = self._last_audit
+        self._last_audit = None
+        return record
+
+    def context_manifest(self) -> Mapping[str, Any] | None:
+        return None
+
+    def usage_summary(self) -> Mapping[str, Any] | None:
+        return None
 
     def _expand_patch_file(self, raw: dict[str, Any]) -> dict[str, Any]:
         if raw.get("tool") != "propose_patch":

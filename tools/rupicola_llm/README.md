@@ -4,10 +4,11 @@ This directory implements Phase 1 and a controller-first slice of Phase 2 from
 [`LLM_DESIGN.md`](../../LLM_DESIGN.md).  It can replay an incomplete Rupicola
 derivation, classify the residual goals left by the stock compiler, run a
 provider-neutral bounded repair loop, and check every candidate patch in an
-isolated source copy.
+isolated source copy.  Its concrete AWS Bedrock Converse adapter can drive that
+loop through an authenticated AWS CLI profile without adding an SDK dependency.
 
-It has a deterministic scripted provider for controller acceptance tests.  It
-does not call a real LLM or apply a proposal to the user's source tree yet.
+The deterministic scripted provider remains the controller acceptance harness.
+Neither provider applies a proposal to the user's source tree.
 
 ## Requirements
 
@@ -17,9 +18,16 @@ does not call a real LLM or apply a proposal to the user's source tree yet.
 - `coqidetop` from the matching Rocq installation;
 - coherent `.vo` artifacts for the selected source and its dependencies.
 
+Remote Bedrock runs additionally require:
+
+- AWS CLI v2 with an authenticated profile and configured region;
+- access to the selected model or inference profile;
+- IAM permission for `bedrock:InvokeModel` through the Converse API.
+
 The implementation uses only Python's standard library.  The Rocq interaction
 is isolated behind `CoqIdeDriver`, so it can later be replaced by a Rocq LSP or
-SerAPI adapter.
+SerAPI adapter.  Bedrock credentials remain in the normal AWS credential chain;
+the sidecar never reads or serializes them.
 
 ## Usage
 
@@ -160,6 +168,90 @@ Both `fast` and `final` are accepted protocol modes in this slice, but `fast`
 currently executes and reports the stricter final pipeline.  This preserves
 the trust boundary while a genuinely incremental checker is still pending.
 
+## AWS Bedrock workflow
+
+`solve --provider bedrock` sends the initial proof context and subsequently
+requested Rocq source through the Bedrock Converse API.  Remote disclosure is
+never implicit: the command stops before reading the target unless
+`--allow-remote-source` is present.
+
+```console
+$ tools/rupicola-llm solve \
+    src/Rupicola/Examples/LLMByteOrBaseline.v \
+    --theorem baseline_byte_or_scalar_br2fn_ok \
+    --provider bedrock \
+    --model-id us.openai.gpt-5.6-sol \
+    --aws-profile default \
+    --allow-remote-source \
+    --scope project \
+    --max-actions 24 \
+    --max-retrievals 8 \
+    --max-checks 3
+```
+
+Model and inference-profile availability is account- and region-specific.  The
+region defaults to `AWS_REGION`, `AWS_DEFAULT_REGION`, or the selected profile's
+configured region, in that order.  Temperature is omitted by default because
+not every Converse model accepts it; pass `--bedrock-temperature` only for a
+model that does.  Strict Bedrock tool schemas are enabled by default.  Optional
+controller fields are represented as required-but-nullable at that boundary
+and normalized back to local defaults.  `--bedrock-no-strict-tools` is a
+compatibility escape hatch, but the local protocol parser still rejects unknown
+tools, unexpected fields, wrong types, unsafe paths, and out-of-range values.
+
+The transport writes each request to a mode-restricted temporary file, invokes
+the AWS CLI with a fixed argument vector and no shell, enforces a process-group
+timeout, bounds diagnostic output, and removes the request file.  The model has
+no shell or filesystem handle.  It can only request the seven controller tools;
+the controller executes them within its own path, action, retrieval, check, and
+wall-time limits.  Parallel model calls are not executed: at most four
+independent read-only calls from one response are serialized, and any batch
+containing a patch, check, revert, or finish action is rejected.
+
+Every remote run writes `disclosure.json` with the provider, model, profile,
+region, context hash and size, initial evidence paths, readable roots, and
+secret-scan status.  The remote copy removes known absolute project, load-path,
+and local executable fields while the full diagnostic stays local; the manifest
+lists each removed JSON path.  A high-confidence credential scan runs before
+every request and blocks likely private keys, cloud access keys, API tokens,
+and assigned secrets without echoing their values.  This is defense in depth,
+not a complete data-loss-prevention system.  The client does not inspect the
+AWS account's model-invocation logging configuration; review that account
+setting before sending confidential source.  AWS documents both its
+[Bedrock data-protection model](https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html)
+and the optional
+[model-invocation logging feature](https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html).
+
+Provider audit data is attached to `events.jsonl`: invocation number, model,
+region, stop reason, requested tool names, token usage, service latency, and
+request ID when the CLI exposes it.  `run.json` also records the system-prompt
+hash and aggregate invocation, token, and model-latency totals.  These records
+never decide whether a patch passes; only the local policy and Rocq validation
+pipeline can do that.
+
+### Unscored live calibration
+
+On 2026-08-22, a development run using the default AWS profile in `us-east-1`
+and `us.openai.gpt-5.6-sol` verified the Byte OR calibration gap.  The run used
+19 typed actions, all 8 allowed retrievals, 3 isolated checks, and 12 model
+invocations over 67.3 controller seconds.  Bedrock reported 96,901 total tokens:
+1,452 uncached input, 79,617 cache-read input, 11,835 cache-write input, and
+3,997 output tokens.
+
+The first checked patch did not apply.  The second imported a stale compiled
+example and failed the frozen-target gate.  The third adapted the checked lemmas
+into a proof-local rule; it closed the residual from 1 to 0 and passed source
+policy, target integrity, compilation, `rocq check`, an empty `Print
+Assumptions` result, and unchanged-source verification.  A subsequent bounded
+smoke run confirmed that the OpenAI profile accepts the adapter's portable
+strict schema.
+
+This is qualitative development evidence, not an efficacy measurement: the
+solution was visible as a calibration analogue, adapter prompts and limits had
+already been tuned on failed runs, and the model configuration was selected
+after compatibility testing.  The preregistered methodology for scored trials
+remains [`LLM_EVAL.md`](../../LLM_EVAL.md).
+
 ## Stale build artifacts
 
 If Rocq reports inconsistent compiled assumptions, the command resolves both
@@ -190,6 +282,10 @@ candidate that passes the isolated compile, kernel, assumptions, and unchanged
 source-tree gates, and a live two-attempt agent run that rejects an axiom before
 verifying its repaired patch.
 
+The default and calibration suites mock the Bedrock transport and never make a
+paid network call.  Remote acceptance is an explicit manual run so CI cannot
+silently disclose source or incur model charges.
+
 ## Current limitations
 
 - The source boundary scanner handles nested comments, strings, qualified
@@ -214,9 +310,15 @@ verifying its repaired patch.
   output.
 - Run metadata pins repository and submodule commits, but does not yet hash the
   complete compiled dependency closure.
-- The provider-neutral controller and deterministic scripted adapter are
-  implemented, but a concrete LLM adapter and first-remote-run disclosure flow
-  are not.
+- The Bedrock gateway currently uses AWS CLI subprocesses rather than an SDK;
+  it has bounded timeouts but no streaming, service retry policy, or aggregate
+  token/cost ceiling beyond the action and wall-time budgets.
+- The disclosure scan intentionally targets high-confidence credential shapes.
+  It does not perform semantic redaction, enforce repository-specific deny
+  lists, or inspect the account's optional Bedrock invocation-logging setting.
+- Model families differ in supported Converse inference parameters.  The
+  adapter omits temperature by default and offers strict/automatic tool-choice
+  compatibility flags, but does not yet maintain a capability registry.
 - Each attempt starts from a fresh isolated source copy, but the additional
   final replay in a distinct second workspace remains to be implemented.
 - `verify` and explicit `apply` remain later Phase 2 work.

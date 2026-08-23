@@ -28,6 +28,7 @@ class _QueueProvider:
         self.observations: list[dict[str, object]] = []
         self.context = None
         self.tools = ()
+        self.audit: dict[str, object] | None = None
 
     def start(self, context: object, tools: tuple[object, ...]) -> None:
         self.context = context
@@ -35,7 +36,39 @@ class _QueueProvider:
 
     def next_action(self, observation: dict[str, object]) -> object:
         self.observations.append(observation)
+        self.audit = {"provider": "test-provider", "turn": len(self.observations)}
         return self.actions.pop(0)
+
+    def take_audit_record(self) -> dict[str, object] | None:
+        record = self.audit
+        self.audit = None
+        return record
+
+    def context_manifest(self) -> dict[str, object]:
+        return {"schema_version": "0.1", "confirmed": True}
+
+    def usage_summary(self) -> dict[str, object]:
+        return {"invocations": len(self.observations)}
+
+
+class _FailingProvider:
+    metadata = ProviderMetadata("test-provider", "failure", True, False)
+
+    def start(self, context: object, tools: tuple[object, ...]) -> None:
+        del context, tools
+
+    def next_action(self, observation: dict[str, object]) -> object:
+        del observation
+        raise RuntimeError("provider unavailable")
+
+    def take_audit_record(self) -> dict[str, object]:
+        return {"provider": "test-provider", "status": "error"}
+
+    def context_manifest(self) -> None:
+        return None
+
+    def usage_summary(self) -> None:
+        return None
 
 
 class AgentControllerTests(unittest.TestCase):
@@ -152,6 +185,7 @@ class AgentControllerTests(unittest.TestCase):
                     timeout_seconds=5,
                     max_actions=8,
                     max_checks=2,
+                    max_retrievals=2,
                     wall_seconds=30,
                 )
 
@@ -160,6 +194,12 @@ class AgentControllerTests(unittest.TestCase):
             self.assertEqual(2, checker.call_count)
             self.assertEqual(7, result["agent"]["actions_used"])
             self.assertEqual(2, result["agent"]["checks_used"])
+            self.assertEqual(2, result["agent"]["retrievals_used"])
+            self.assertEqual(7, result["agent"]["usage"]["invocations"])
+            self.assertEqual(
+                "retrieval_budget_exhausted",
+                provider.observations[3]["error"],
+            )
             self.assertTrue(provider.observations[5]["candidate_reverted"])
 
             run = Path(result["run_directory"])
@@ -171,10 +211,57 @@ class AgentControllerTests(unittest.TestCase):
             self.assertEqual(7, len(events))
             self.assertEqual(2, len(attempts))
             self.assertNotIn("unified_diff", events[3]["action"]["arguments"])
+            self.assertEqual("test-provider", events[0]["provider"]["provider"])
             self.assertEqual("child-verified", attempts[1]["child_run_id"])
+            self.assertTrue((run / "disclosure.json").is_file())
             loaded = load_run(RunStore(root / "runs"), result["run_id"])
             self.assertEqual("agent_controller", loaded["run"]["kind"])
             self.assertIn("agent_controller", format_show_human(loaded))
+
+    def test_records_provider_failures_inside_the_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            target = root / "src" / "Rupicola" / "Case.v"
+            target.parent.mkdir(parents=True)
+            target.write_text("Abort.\n", encoding="utf-8")
+            project = SimpleNamespace(
+                root=root,
+                metadata=lambda: {
+                    "root": str(root),
+                    "root_commit": "test",
+                    "submodules": {},
+                },
+            )
+            diagnosis = {
+                "schema_version": "0.1",
+                "status": "residuals",
+                "snapshot": {
+                    "goal_count": 1,
+                    "actionable_goal_count": 1,
+                    "goals": [],
+                },
+            }
+            with (
+                patch("rupicola_llm.agent.Project.discover", return_value=project),
+                patch("rupicola_llm.agent.diagnose", return_value=(diagnosis, 0)),
+                patch("rupicola_llm.agent._worktree_fingerprint", return_value="same"),
+            ):
+                result, exit_code = solve_with_agent(
+                    target,
+                    "case_ok",
+                    _FailingProvider(),
+                    runs_root=root / "runs",
+                    timeout_seconds=5,
+                    wall_seconds=30,
+                )
+
+            self.assertEqual(5, exit_code)
+            self.assertEqual("provider_error", result["status"])
+            self.assertEqual(1, result["agent"]["actions_used"])
+            events = Path(result["run_directory"], "events.jsonl").read_text()
+            event = json.loads(events)
+            self.assertEqual("provider_error", event["observation"]["error"])
+            self.assertEqual("error", event["provider"]["status"])
 
     @staticmethod
     def _check_result(

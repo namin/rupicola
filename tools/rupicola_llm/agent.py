@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 import re
 import time
-from typing import Any
+from typing import Any, Mapping
 
 from . import __version__
 from .agent_protocol import (
@@ -74,6 +74,7 @@ def solve_with_agent(
     timeout_seconds: float = 120.0,
     max_actions: int = 24,
     max_checks: int = 3,
+    max_retrievals: int = 8,
     wall_seconds: float = 900.0,
 ) -> tuple[dict[str, Any], int]:
     started_at = datetime.now(timezone.utc)
@@ -85,6 +86,7 @@ def solve_with_agent(
         timeout_seconds,
         max_actions,
         max_checks,
+        max_retrievals,
         wall_seconds,
     )
     if error is not None:
@@ -135,6 +137,8 @@ def solve_with_agent(
             "provider": provider_metadata["provider"],
             "model": provider_metadata["model"],
             "remote": provider_metadata["remote"],
+            "configuration": provider_metadata.get("configuration", {}),
+            "usage": None,
         },
         "permissions": {
             "target": target_relative,
@@ -146,6 +150,7 @@ def solve_with_agent(
         "limits": {
             "actions": max_actions,
             "checks": max_checks,
+            "retrievals": max_retrievals,
             "wall_seconds": wall_seconds,
             "checker_seconds": timeout_seconds,
             "patch_bytes": _MAX_PATCH_BYTES,
@@ -261,6 +266,9 @@ def solve_with_agent(
             checks_used=0,
             exit_code=5,
         )
+    manifest = _provider_context_manifest(provider)
+    if manifest is not None:
+        run.write_json("disclosure.json", manifest)
 
     tools = RepositoryTools(project.root, snapshot, readable_roots=_READABLE_ROOTS)
     observation: dict[str, Any] = {
@@ -276,6 +284,7 @@ def solve_with_agent(
     best: _Candidate | None = None
     actions_used = 0
     checks_used = 0
+    retrievals_used = 0
     status: str | None = None
     exit_code = 4
     finish_summary = ""
@@ -287,20 +296,44 @@ def solve_with_agent(
             break
         try:
             action = provider.next_action(observation)
+            provider_audit = _take_provider_audit(provider)
         except ProviderExhausted as error_value:
             status = "exhausted"
             finish_summary = str(error_value)
             break
         except AgentProtocolError as error_value:
             actions_used += 1
+            provider_audit = _take_provider_audit(provider)
             observation = {
                 "status": "error",
                 "error": "invalid_action",
                 "message": str(error_value),
             }
-            _record_event(run, actions_used, None, observation, started_monotonic)
+            _record_event(
+                run,
+                actions_used,
+                None,
+                observation,
+                started_monotonic,
+                provider_audit=provider_audit,
+            )
             continue
         except Exception as error_value:  # provider adapters are untrusted
+            actions_used += 1
+            provider_audit = _take_provider_audit(provider)
+            observation = {
+                "status": "error",
+                "error": "provider_error",
+                "message": str(error_value),
+            }
+            _record_event(
+                run,
+                actions_used,
+                None,
+                observation,
+                started_monotonic,
+                provider_audit=provider_audit,
+            )
             status = "provider_error"
             exit_code = 5
             finish_summary = f"Provider call failed: {error_value}"
@@ -310,11 +343,23 @@ def solve_with_agent(
         terminal = False
         try:
             if isinstance(action, SearchAction):
-                observation = tools.search(action)
+                if retrievals_used >= max_retrievals:
+                    observation = _retrieval_budget_exhausted(max_retrievals)
+                else:
+                    retrievals_used += 1
+                    observation = tools.search(action)
             elif isinstance(action, ReadAction):
-                observation = tools.read(action)
+                if retrievals_used >= max_retrievals:
+                    observation = _retrieval_budget_exhausted(max_retrievals)
+                else:
+                    retrievals_used += 1
+                    observation = tools.read(action)
             elif isinstance(action, InspectObligationAction):
-                observation = tools.inspect(action)
+                if retrievals_used >= max_retrievals:
+                    observation = _retrieval_budget_exhausted(max_retrievals)
+                else:
+                    retrievals_used += 1
+                    observation = tools.inspect(action)
             elif isinstance(action, ProposePatchAction):
                 proposals_used += 1
                 current, proposal_observation = _accept_proposal(
@@ -413,13 +458,22 @@ def solve_with_agent(
                 "error": "tool_error",
                 "message": str(error_value),
             }
-        _record_event(run, actions_used, action, observation, started_monotonic)
+        _record_event(
+            run,
+            actions_used,
+            action,
+            observation,
+            started_monotonic,
+            provider_audit=provider_audit,
+        )
         if terminal:
             break
 
     if status is None:
         status = "exhausted"
         finish_summary = f"The {max_actions}-action budget was exhausted."
+
+    _refresh_provider_metadata(run_record, provider)
 
     selected = best or current or (candidates[-1] if candidates else None)
     validation = _controller_validation(
@@ -441,8 +495,20 @@ def solve_with_agent(
         base_fingerprint,
         actions_used=actions_used,
         checks_used=checks_used,
+        retrievals_used=retrievals_used,
         exit_code=exit_code,
     )
+
+
+def _retrieval_budget_exhausted(limit: int) -> dict[str, Any]:
+    return {
+        "status": "error",
+        "error": "retrieval_budget_exhausted",
+        "message": (
+            f"the run is limited to {limit} retrieval actions; "
+            "propose a patch, check the current candidate, or finish"
+        ),
+    }
 
 
 def _accept_proposal(
@@ -562,6 +628,8 @@ def _record_event(
     action: AgentAction | None,
     observation: dict[str, Any],
     started_monotonic: float,
+    *,
+    provider_audit: Mapping[str, Any] | None = None,
 ) -> None:
     run.append_jsonl(
         "events.jsonl",
@@ -573,6 +641,9 @@ def _record_event(
             if action is not None
             else {"tool": "<invalid>", "arguments": {}},
             "observation": _bounded_value(observation),
+            "provider": _bounded_value(provider_audit)
+            if provider_audit is not None
+            else None,
         },
     )
 
@@ -696,6 +767,7 @@ def _finalize(
     *,
     actions_used: int,
     checks_used: int,
+    retrievals_used: int = 0,
     exit_code: int,
 ) -> tuple[dict[str, Any], int]:
     proposal_text = ""
@@ -749,12 +821,16 @@ def _finalize(
     run_record["controller"] = {
         "actions_used": actions_used,
         "checks_used": checks_used,
+        "retrievals_used": retrievals_used,
         "termination": finish_summary,
         "elapsed_seconds": time.monotonic() - started_monotonic,
     }
     run_record["artifacts"] = {
         "context": "context.initial.json"
         if (run.path / "context.initial.json").is_file()
+        else None,
+        "disclosure": "disclosure.json"
+        if (run.path / "disclosure.json").is_file()
         else None,
         "initial_obligations": "obligations.initial.json",
         "events": "events.jsonl",
@@ -834,12 +910,78 @@ def _bounded_value(value: Any, *, depth: int = 0) -> Any:
     return value
 
 
+def _take_provider_audit(provider: AgentProvider) -> Mapping[str, Any] | None:
+    take = getattr(provider, "take_audit_record", None)
+    if not callable(take):
+        return None
+    try:
+        value = take()
+    except Exception as error:  # audit hooks cannot control proof acceptance
+        return {
+            "status": "unavailable",
+            "error_type": type(error).__name__,
+        }
+    return value if isinstance(value, Mapping) else None
+
+
+def _provider_context_manifest(
+    provider: AgentProvider,
+) -> Mapping[str, Any] | None:
+    read = getattr(provider, "context_manifest", None)
+    if not callable(read):
+        return None
+    try:
+        value = read()
+    except Exception as error:  # disclosure evidence is best effort after provider start
+        return {
+            "schema_version": "0.1",
+            "status": "unavailable",
+            "error_type": type(error).__name__,
+        }
+    return value if isinstance(value, Mapping) else None
+
+
+def _refresh_provider_metadata(
+    run_record: dict[str, Any], provider: AgentProvider
+) -> None:
+    try:
+        metadata = provider.metadata.to_dict()
+    except Exception:
+        return
+    run_record["model"].update(
+        {
+            "invoked": metadata["model_invoked"],
+            "provider": metadata["provider"],
+            "model": metadata["model"],
+            "remote": metadata["remote"],
+            "configuration": metadata.get("configuration", {}),
+        }
+    )
+    usage = _provider_usage_summary(provider)
+    if usage is not None:
+        run_record["model"]["usage"] = _bounded_value(usage)
+
+
+def _provider_usage_summary(
+    provider: AgentProvider,
+) -> Mapping[str, Any] | None:
+    read = getattr(provider, "usage_summary", None)
+    if not callable(read):
+        return None
+    try:
+        value = read()
+    except Exception:
+        return None
+    return value if isinstance(value, Mapping) else None
+
+
 def _validate_request(
     theorem: str,
     scope: str,
     timeout_seconds: float,
     max_actions: int,
     max_checks: int,
+    max_retrievals: int,
     wall_seconds: float,
 ) -> str | None:
     if _THEOREM_RE.fullmatch(theorem) is None:
@@ -852,6 +994,8 @@ def _validate_request(
         return "max_actions must be between 1 and 100"
     if isinstance(max_checks, bool) or not 1 <= max_checks <= 20:
         return "max_checks must be between 1 and 20"
+    if isinstance(max_retrievals, bool) or not 0 <= max_retrievals <= 100:
+        return "max_retrievals must be between 0 and 100"
     if not math.isfinite(wall_seconds) or wall_seconds <= 0:
         return "wall_seconds must be positive and finite"
     return None

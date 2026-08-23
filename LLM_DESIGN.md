@@ -8,9 +8,11 @@ Phase 2 slice are in [`tools/rupicola_llm`](tools/rupicola_llm/README.md).  The
 sidecar captures and classifies live residual goals, ranks local evidence,
 offers a provider-neutral typed action protocol, runs a bounded repair
 controller, and validates every candidate in isolation.  A deterministic
-scripted provider exercises rejection followed by repair without calling a
-model.  A concrete LLM provider adapter, separate fast checker, clean
-second-workspace replay, `verify`, and explicit `apply` remain.
+scripted provider exercises rejection followed by repair, and an AWS Bedrock
+Converse adapter has completed a live verified calibration run with explicit
+source disclosure, credential screening, provider audit records, and bounded
+read-only batching.  A separate fast checker, clean second-workspace replay,
+provider capability registry, `verify`, and explicit `apply` remain.
 
 ## 1. Product decision
 
@@ -304,9 +306,15 @@ by the project adapter rather than supplied as model-authored shell strings.
 The current prototype implements these calls as strict, versioned JSON-schema
 tools behind an `AgentProvider` protocol.  Its deterministic scripted adapter
 is an acceptance harness for controller behavior, not a simulated measure of
-model quality.  Until the separate fast checker exists, both requested check
-modes execute the stricter final validation pipeline and report that effective
-mode in the transcript.
+model quality.  The concrete AWS Bedrock adapter maps the same tools to
+Converse, uses the ordinary AWS credential chain through a fixed AWS CLI
+gateway, normalizes optional fields for portable strict schemas, and returns
+all tool results through the provider protocol.  Multiple read-only calls from
+one response are serialized; stateful batches and batches larger than four are
+rejected.  A separate retrieval budget prevents source exploration from
+starving patch/check actions.  Until the separate fast checker exists, both
+requested check modes execute the stricter final validation pipeline and report
+that effective mode in the transcript.
 
 The repair loop is:
 
@@ -374,7 +382,11 @@ Runs are stored outside tracked source files by default:
 ```text
 .rupicola/llm/runs/<run-id>/
   run.json
+  context.initial.json
+  disclosure.json
+  tools.json
   obligations.initial.json
+  events.jsonl
   attempts.jsonl
   proposal.patch
   validation.json
@@ -384,9 +396,13 @@ Runs are stored outside tracked source files by default:
 
 `run.json` pins the repository and submodule SHAs, target, proof cursor, model
 configuration, prompt version, permissions, limits, and dependency digests.
-`attempts.jsonl` is append-only and records candidate hashes, actions, checker
-results, and residual deltas.  Logs and transcripts may contain source code and
-therefore follow the project's retention policy.
+`disclosure.json` records the confirmed remote context manifest without
+duplicating its source.  `events.jsonl` records typed actions, bounded
+observations, and provider usage/latency metadata; `attempts.jsonl` records
+candidate hashes, checker results, and residual deltas.  `run.json` includes the
+system-prompt hash and aggregate provider usage when exposed.  Logs and
+transcripts may contain source code and therefore follow the project's
+retention policy.
 
 The source patch is the portable product artifact.  Replaying an accepted patch
 requires Rocq and the pinned source dependencies, not the original LLM or its
@@ -471,6 +487,16 @@ which paths may be retrieved.  It supports:
 
 Repository search tools available to the model have no independent internet
 access.
+
+The implemented Bedrock slice requires `--allow-remote-source` on every remote
+run, persists the initial context hash, size, evidence paths, readable roots,
+provider, model, profile, and region, and scans the initial context plus every
+subsequent request for high-confidence credential patterns.  The transmitted
+copy removes known absolute project, load-path, and executable fields and lists
+those removals in the local manifest.  It intentionally does not claim to
+detect the AWS account's optional model-invocation logging or to provide
+complete semantic redaction.  Those limits remain visible in the manifest and
+CLI documentation.
 
 ## 10. Validation pipeline
 

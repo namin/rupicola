@@ -61,6 +61,33 @@ visible in the repository as examples available to the agent.  Reporting them
 alongside the evaluation is useful qualitative evidence, but including them in
 a success rate would bias the result.
 
+### Development acceptance observation
+
+On 2026-08-22, after implementing the AWS Bedrock adapter, one deliberately
+unscored live run used `us.openai.gpt-5.6-sol` through the default profile in
+`us-east-1` on the visible Byte OR calibration case.  It reached a verified
+proposal in 19 typed actions, 8 retrievals, 3 checker executions, 12 model
+invocations, and 67.3 controller seconds.  Bedrock reported 96,901 total tokens,
+including 79,617 cache-read and 11,835 cache-write input tokens.
+
+The trajectory was checker-driven rather than one-shot: one candidate failed
+patch application, a second imported an inconsistent precompiled example and
+failed frozen-target validation, and the third adapted the checked byte-OR
+lemmas into a proof-local compiler rule.  That candidate changed only the
+target module, reduced actionable residuals from one to zero, compiled, passed
+`rocq check`, was closed under `Print Assumptions`, and left the source tree
+unchanged.  The successful run used non-strict provider schemas with the local
+typed parser still authoritative; a subsequent one-invocation smoke run
+confirmed the adapter's required-but-nullable strict-schema encoding on the
+same model profile.
+
+This observation is not part of the primary results.  The calibration solution
+was visible, prompts and controller limits were changed after earlier failed
+runs, the model was selected after provider compatibility checks, and no fresh
+trial protocol had been frozen.  Its purpose is to establish that the product
+can execute a real remote propose/check/repair loop, not to estimate success
+probability.
+
 ## 4. Evaluation units
 
 A **task** is one frozen Rupicola derivation gap.  A **trial** is one fresh agent
