@@ -10,6 +10,10 @@ loop through an authenticated AWS CLI profile without adding an SDK dependency.
 The deterministic scripted provider remains the controller acceptance harness.
 Neither provider applies a proposal to the user's source tree.
 
+For a newcomer-friendly walkthrough that assumes no Rupicola or Rocq
+experience, start with [`LLM_TUTORIAL.md`](../../LLM_TUTORIAL.md).  This README
+is the command and implementation reference.
+
 ## Requirements
 
 - Python 3.10 or newer;

@@ -6,6 +6,10 @@ the held-out tasks are instantiated or any scored run begins.
 This protocol evaluates the product architecture in
 [`LLM_DESIGN.md`](LLM_DESIGN.md); it does not replace that design.
 
+The newcomer-oriented [`LLM_TUTORIAL.md`](LLM_TUTORIAL.md) exercises visible
+development calibration cases only.  Its local and live walkthroughs are
+useful product checks, but they are not scored evidence under this protocol.
+
 ## 1. Decision
 
 The LLM is an external, untrusted augmentation layer for Rupicola.  It may read

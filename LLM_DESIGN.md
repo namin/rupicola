@@ -1,7 +1,8 @@
 # LLM-assisted Rupicola: product design
 
 Status: proposed product architecture v1.  The companion experimental protocol
-is in [`LLM_EVAL.md`](LLM_EVAL.md).
+is in [`LLM_EVAL.md`](LLM_EVAL.md), and the newcomer-oriented executable
+walkthrough is in [`LLM_TUTORIAL.md`](LLM_TUTORIAL.md).
 
 Implementation status: the read-only Phase 1 diagnostic and an executable
 Phase 2 slice are in [`tools/rupicola_llm`](tools/rupicola_llm/README.md).  The
