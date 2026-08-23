@@ -59,6 +59,11 @@ Chose your own adventure below:
 
 -  Watch the `Rupicola thesis defense <https://youtu.be/BG3RXB8hZo4>`__,
 
+-  Explore the experimental, kernel-checked LLM proof-repair sidecar in
+   `the rupicola-llm quick start <tools/rupicola_llm/README.md>`__, then read
+   its `product design <LLM_DESIGN.md>`__ and
+   `evaluation protocol <LLM_EVAL.md>`__.
+
 -  … or try Rupicola out by following the tutorial below!
 
 Using Rupicola

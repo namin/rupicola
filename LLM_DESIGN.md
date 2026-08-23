@@ -12,7 +12,8 @@ scripted provider exercises rejection followed by repair, and an AWS Bedrock
 Converse adapter has completed a live verified calibration run with explicit
 source disclosure, credential screening, provider audit records, and bounded
 read-only batching.  A separate fast checker, clean second-workspace replay,
-provider capability registry, `verify`, and explicit `apply` remain.
+provider capability registry, automated exhausted-run resume, `verify`, and
+explicit `apply` remain.
 
 ## 1. Product decision
 
@@ -531,18 +532,23 @@ product never renders a skipped check as success.
 The CLI is the v1 interface.  Editor integration calls the same local service
 later rather than embedding a second implementation.
 
-Commands:
+The planned v1 command surface is:
 
 ```text
 rupicola-llm init
 rupicola-llm diagnose <file> --theorem <name>
 rupicola-llm solve <file> --theorem <name> [--scope local|project]
 rupicola-llm show <run-id>
+rupicola-llm resume <run-id>
 rupicola-llm verify <run-id>
 rupicola-llm apply <run-id>
 rupicola-llm promote <run-id> --dry-run
 rupicola-llm runs
 ```
+
+The current prototype implements only `diagnose`, `solve`, and `show`.
+`init`, automated `resume`, `verify`, `apply`, `promote`, and `runs` remain
+planned interfaces; their appearance above is not an implementation claim.
 
 The project configuration declares:
 
@@ -596,9 +602,13 @@ incomplete proof as a solution.
 | Registry entry no longer replays | Mark it stale; do not offer it as verified reuse |
 | Model/provider unavailable | Preserve the diagnosis so another configured provider or a human can continue |
 
-A user can resume an exhausted run from its last policy-valid candidate.  The
-resume creates a child run with its own model and budget record; histories are
-never silently combined.
+The intended product lets a user resume an exhausted run from its last
+policy-valid candidate.  That resume creates a child run with its own model and
+budget record; histories are never silently combined.  The current prototype
+persists the selected `proposal.patch` but does not implement `resume`: a user
+can recheck that patch through `solve --candidate-patch` without calling a
+provider, or start a fresh provider run.  Automated child-run resume remains
+Phase 2 work.
 
 ## 13. Observability
 
@@ -640,7 +650,8 @@ boundary: obtaining stable Rupicola residuals.
 - isolated candidate workspaces;
 - patch generation, fast checks, and bounded repair;
 - final clean replay, assumptions check, and validation report;
-- `solve`, `show`, `verify`, and explicit `apply` commands.
+- `solve`, `show`, exhausted-run resume, `verify`, and explicit `apply`
+  commands.
 
 The three existing LLM case studies are acceptance fixtures for this phase.
 

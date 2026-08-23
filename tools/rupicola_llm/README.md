@@ -29,7 +29,37 @@ is isolated behind `CoqIdeDriver`, so it can later be replaced by a Rocq LSP or
 SerAPI adapter.  Bedrock credentials remain in the normal AWS credential chain;
 the sidecar never reads or serializes them.
 
-## Usage
+## Quick start
+
+Run these commands from the repository root.  Start by inspecting a real
+residual without invoking a model or editing source:
+
+```console
+$ tools/rupicola-llm diagnose \
+    src/Rupicola/Examples/LLMFindByteBaseline.v \
+    --theorem baseline_find_byte_br2fn_ok
+```
+
+Then exercise the complete bounded controller and isolated checker with the
+deterministic Byte OR script:
+
+```console
+$ tools/rupicola-llm solve \
+    src/Rupicola/Examples/LLMByteOrBaseline.v \
+    --theorem baseline_byte_or_scalar_br2fn_ok \
+    --agent-script tools/tests/fixtures/byte_or_agent.json \
+    --scope project \
+    --max-actions 8 \
+    --max-checks 2
+```
+
+The command prints a run ID.  Inspect the result with
+`tools/rupicola-llm show <run-id>` or read its artifacts below
+`.rupicola/llm/runs/<run-id>/`.  The proposal remains unapplied.  Continue to
+the [AWS Bedrock workflow](#aws-bedrock-workflow) only when remote source
+disclosure and provider charges are acceptable.
+
+## Diagnose workflow
 
 From the repository root:
 
@@ -77,8 +107,8 @@ errors.
 
 `solve --candidate-patch` is the model-independent boundary used to develop
 the Phase 2 controller.  It accepts a unified diff, never applies it to the
-source tree, and runs it through the same gates a future model proposal will
-use:
+source tree, and runs it through the same gates used for remote-model
+proposals:
 
 ```console
 $ tools/rupicola-llm solve \
@@ -153,7 +183,7 @@ twice.  The action, check, and wall-time budgets are configurable and recorded.
 
 The scripted provider consumes a versioned JSON `actions` array.  Its
 `patch_file` shorthand is resolved only below the script directory and expanded
-to the same `unified_diff` argument a future model adapter must return.  It is a
+to the same `unified_diff` argument returned by the Bedrock adapter.  It is a
 deterministic development adapter, not an LLM substitute.
 
 Each controller run retains `context.initial.json`, `tools.json`,
@@ -168,12 +198,47 @@ Both `fast` and `final` are accepted protocol modes in this slice, but `fast`
 currently executes and reports the stricter final pipeline.  This preserves
 the trust boundary while a genuinely incremental checker is still pending.
 
+### Inspecting or recovering an exhausted run
+
+Exit status `4` does not necessarily mean that the provider failed to produce a
+patch.  An exhausted run retains every proposal and, when one was staged, puts
+the last selected proposal in `proposal.patch`.  That file is untrusted and may
+not have consumed a checker attempt; do not treat it as verified unless
+`validation.json` and `show` report `verified`.
+
+The current prototype has no automated `resume` command.  To check a saved
+proposal without another provider invocation, submit it through the
+model-independent boundary in a new run:
+
+```console
+$ tools/rupicola-llm solve \
+    src/Rupicola/Examples/LLMByteOrBaseline.v \
+    --theorem baseline_byte_or_scalar_br2fn_ok \
+    --candidate-patch .rupicola/llm/runs/<run-id>/proposal.patch \
+    --scope project
+```
+
+If more model interaction is required, start a fresh `solve --provider
+bedrock` run with newly chosen budgets.  Automatic child-run resume remains
+later Phase 2 work.
+
 ## AWS Bedrock workflow
 
 `solve --provider bedrock` sends the initial proof context and subsequently
 requested Rocq source through the Bedrock Converse API.  Remote disclosure is
 never implicit: the command stops before reading the target unless
 `--allow-remote-source` is present.
+
+Confirm the intended AWS identity and configured region before the first paid
+run:
+
+```console
+$ aws sts get-caller-identity --profile default
+$ aws configure get region --profile default
+```
+
+The following is a deliberately small smoke run on the visible Byte OR
+calibration case:
 
 ```console
 $ tools/rupicola-llm solve \
@@ -182,12 +247,19 @@ $ tools/rupicola-llm solve \
     --provider bedrock \
     --model-id us.openai.gpt-5.6-sol \
     --aws-profile default \
+    --aws-region us-east-1 \
     --allow-remote-source \
     --scope project \
-    --max-actions 24 \
-    --max-retrievals 8 \
-    --max-checks 3
+    --max-actions 8 \
+    --max-retrievals 3 \
+    --max-checks 2 \
+    --wall-seconds 120 \
+    --provider-timeout 60 \
+    --bedrock-max-tokens 2048
 ```
+
+Replace the model, profile, and region with values available to the intended
+AWS account; omit `--aws-region` to use the configured default.
 
 Model and inference-profile availability is account- and region-specific.  The
 region defaults to `AWS_REGION`, `AWS_DEFAULT_REGION`, or the selected profile's
@@ -198,6 +270,12 @@ controller fields are represented as required-but-nullable at that boundary
 and normalized back to local defaults.  `--bedrock-no-strict-tools` is a
 compatibility escape hatch, but the local protocol parser still rejects unknown
 tools, unexpected fields, wrong types, unsafe paths, and out-of-range values.
+
+`--bedrock-max-tokens` is a per-response output limit, not a whole-run token or
+cost ceiling.  Action, check, retrieval, provider-timeout, and wall-time limits
+bound other dimensions of a run, but the current adapter cannot enforce an
+aggregate provider token or currency budget.  Inspect the recorded usage in
+`run.json` and use the AWS account's normal billing controls.
 
 The transport writes each request to a mode-restricted temporary file, invokes
 the AWS CLI with a fixed argument vector and no shell, enforces a process-group
@@ -260,7 +338,26 @@ paths and timestamps.  It stops instead of presenting the build failure as a
 proof residual.
 
 The command never rebuilds automatically.  Rebuild the reported library and
-its dependents with the project's normal build system, then rerun `diagnose`.
+its dependents with the project's normal build system, then rerun the failed
+command.  A full rebuild from the repository root is the safest option:
+
+```console
+$ make -j
+```
+
+For a named Rupicola module already present in `_CoqProject`, the generated
+makefile uses an absolute `.vo` target.  Rebuild only that module by passing the
+absolute path reported by the diagnostic; for example:
+
+```console
+$ make -f Makefile.coq \
+    "$(pwd)/src/Rupicola/Examples/LLMByteOrCompiler.vo"
+```
+
+Do not rely on a relative `make src/...vo` invocation: the top-level wrapper can
+match a different target without rebuilding the generated makefile's absolute
+module target.  If rebuilding one module reveals another inconsistent
+dependency, use the full build instead.
 
 ## Tests
 
@@ -321,4 +418,6 @@ silently disclose source or incur model charges.
   compatibility flags, but does not yet maintain a capability registry.
 - Each attempt starts from a fresh isolated source copy, but the additional
   final replay in a distinct second workspace remains to be implemented.
+- Exhausted runs retain their last staged proposal, but automated child-run
+  resume remains later Phase 2 work.
 - `verify` and explicit `apply` remain later Phase 2 work.
