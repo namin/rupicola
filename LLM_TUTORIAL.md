@@ -717,6 +717,8 @@ logical evidence.
   boundary, planned CLI, and delivery phases.
 - [`LLM_EVAL.md`](LLM_EVAL.md) defines the preregistered held-out evaluation
   protocol and explains why calibration runs are not efficacy measurements.
+- [`LLM_INSIGHTS.md`](LLM_INSIGHTS.md) synthesizes the qualitative development
+  evidence, research hypotheses, non-claims, and questions for the next phase.
 - [`src/Rupicola/Examples/LLMByteOrCaseStudy.md`](src/Rupicola/Examples/LLMByteOrCaseStudy.md),
   [`LLMCountByteCaseStudy.md`](src/Rupicola/Examples/LLMCountByteCaseStudy.md),
   and [`LLMFindByteCaseStudy.md`](src/Rupicola/Examples/LLMFindByteCaseStudy.md)

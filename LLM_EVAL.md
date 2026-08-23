@@ -9,6 +9,8 @@ This protocol evaluates the product architecture in
 The newcomer-oriented [`LLM_TUTORIAL.md`](LLM_TUTORIAL.md) exercises visible
 development calibration cases only.  Its local and live walkthroughs are
 useful product checks, but they are not scored evidence under this protocol.
+The same boundary applies to the formative observations synthesized in
+[`LLM_INSIGHTS.md`](LLM_INSIGHTS.md).
 
 ## 1. Decision
 
