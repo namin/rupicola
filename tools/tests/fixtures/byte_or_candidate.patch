@@ -1,0 +1,79 @@
+diff --git a/src/Rupicola/Examples/LLMByteOrBaseline.v b/src/Rupicola/Examples/LLMByteOrBaseline.v
+--- a/src/Rupicola/Examples/LLMByteOrBaseline.v
++++ b/src/Rupicola/Examples/LLMByteOrBaseline.v
+@@ -1,9 +1,9 @@
+ Require Import Rupicola.Lib.Api.
+ Require Import Rupicola.Examples.LLMByteOrSpec.
++Require Import Rupicola.Generated.LLMByteOrSupport.
+-
++
+-(** Negative control for the case study.  This file intentionally does not
+-    import [LLMByteOrCompiler].  It checks that the stock compiler reaches the
+-    expected byte-OR expression goal and then aborts the derivation. *)
++(** Deterministic checked-solve fixture: install a cited compiler pattern
++    through project-scoped generated support. *)
+ Section Baseline.
+   Context {width : Z} {BW : Bitwidth width} {word : word.word width}.
+   Context {mem : map.map word Byte.byte} {locals : map.map String.string word}.
+@@ -26,11 +26,7 @@ Section Baseline.
+             { baseline_byte_or_scalar_br2fn },
+           implements byte_or_scalar)
+          as baseline_byte_or_scalar_br2fn_ok.
+   Proof.
+-    compile_setup; repeat repeat compile_step.
+-    lazymatch goal with
+-    | |- DEXPR _ _ _ (word_of_byte (byte_or _ _)) => idtac
+-    | |- ?G => fail "Unexpected baseline residual goal:" G
+-    end.
+-  Abort.
++    compile.
++  Qed.
+ End Baseline.
+diff --git a/src/Rupicola/Generated/LLMByteOrSupport.v b/src/Rupicola/Generated/LLMByteOrSupport.v
+new file mode 100644
+--- /dev/null
++++ b/src/Rupicola/Generated/LLMByteOrSupport.v
+@@ -0,0 +1,43 @@
++Require Import Rupicola.Lib.Api.
++Require Import Rupicola.Examples.LLMByteOrSpec.
++
++(** Project-scoped byte-OR compiler support proposed in the candidate. *)
++Section ByteOrCompiler.
++  Context {width : Z} {BW : Bitwidth width} {word : word.word width}.
++  Context {mem : map.map word Byte.byte} {locals : map.map String.string word}.
++  Context {word_ok : word.ok word} {mem_ok : map.ok mem}.
++  Context {locals_ok : map.ok locals}.
++
++  Lemma byte_unsigned_or (x y : byte) :
++    byte.unsigned (byte_or x y) =
++    Z.lor (byte.unsigned x) (byte.unsigned y).
++  Proof.
++    unfold byte_or; rewrite byte.unsigned_of_Z.
++    unfold byte.wrap; rewrite <- Z.land_ones.
++    1: bitblast.Z.bitblast.
++    1: rewrite !testbit_byte_unsigned_ge.
++    all: reflexivity || lia.
++  Qed.
++
++  Lemma byte_morph_or (x y : byte) :
++    word_of_byte (byte_or x y) =
++    word.or (word := word) (word_of_byte x) (word_of_byte y).
++  Proof.
++    rewrite byte_unsigned_or, word.morph_or; reflexivity.
++  Qed.
++
++  Context {m : mem} {l : locals}.
++
++  Lemma expr_compile_byte_or
++        (x y : byte) (ex ey : expr)
++        (Hx : DEXPR m l ex (word_of_byte x))
++        (Hy : DEXPR m l ey (word_of_byte y)) :
++    DEXPR m l (expr.op bopname.or ex ey) (word_of_byte (byte_or x y)).
++  Proof.
++    rewrite byte_morph_or.
++    eauto using expr_compile_word_or.
++  Qed.
++End ByteOrCompiler.
++
++#[export] Hint Extern 5 (DPAT (word_of_byte (byte_or _ _))) =>
++  simple eapply expr_compile_byte_or; shelve : expr_compiler.

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 import shutil
+import tempfile
 import unittest
 
 from rupicola_llm.diagnose import diagnose
+from rupicola_llm.solve import solve_with_patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,7 +61,65 @@ class CalibrationTests(unittest.TestCase):
             first["snapshot"]["fingerprint"], second["snapshot"]["fingerprint"]
         )
 
+    def test_byte_or_candidate_is_verified_without_touching_source(self) -> None:
+        target = ROOT / self.CASES[0][0]
+        before = hashlib.sha256(target.read_bytes()).hexdigest()
+        fixture = ROOT / "tools/tests/fixtures/byte_or_candidate.patch"
+        with tempfile.TemporaryDirectory() as temporary:
+            result, exit_code = solve_with_patch(
+                target,
+                self.CASES[0][1],
+                fixture,
+                scope="project",
+                runs_root=Path(temporary) / "runs",
+                timeout_seconds=30,
+                rationale="deterministic checked-solve acceptance fixture",
+            )
+            run_directory = Path(result["run_directory"])
+            self.assertEqual(0, exit_code, result)
+            self.assertEqual("verified", result["status"])
+            self.assertTrue((run_directory / "proposal.patch").is_file())
+            self.assertTrue((run_directory / "validation.json").is_file())
+            self.assertFalse((run_directory / "workspace").exists())
+            checks = {
+                check["name"]: check["status"]
+                for check in result["validation"]["checks"]
+            }
+            self.assertTrue(checks)
+            self.assertEqual({"passed"}, set(checks.values()))
+        after = hashlib.sha256(target.read_bytes()).hexdigest()
+        self.assertEqual(before, after)
+
+    def test_unsafe_candidate_is_rejected_before_compilation(self) -> None:
+        target = ROOT / self.CASES[0][0]
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            candidate = temporary_path / "unsafe.patch"
+            candidate.write_text(
+                "--- /dev/null\n"
+                "+++ b/src/Rupicola/Generated/Unsafe.v\n"
+                "@@ -0,0 +1 @@\n"
+                "+Axiom escape : True.\n",
+                encoding="utf-8",
+            )
+            result, exit_code = solve_with_patch(
+                target,
+                self.CASES[0][1],
+                candidate,
+                scope="project",
+                runs_root=temporary_path / "runs",
+                timeout_seconds=30,
+            )
+            self.assertEqual(4, exit_code)
+            self.assertEqual("rejected", result["status"])
+            checks = {
+                check["name"]: check["status"]
+                for check in result["validation"]["checks"]
+            }
+            self.assertEqual("failed", checks["source_policy"])
+            self.assertEqual("skipped", checks["candidate_compile"])
+            self.assertEqual("passed", checks["source_tree_unchanged"])
+
 
 if __name__ == "__main__":
     unittest.main()
-

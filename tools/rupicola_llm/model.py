@@ -168,3 +168,73 @@ class Diagnostic:
             "details": self.details,
             "suggestion": self.suggestion,
         }
+
+
+@dataclass(frozen=True)
+class ResidualDelta:
+    initial_actionable: int
+    final_actionable: int | None
+    closed_fingerprints: tuple[str, ...] = ()
+    opened_fingerprints: tuple[str, ...] = ()
+
+    @classmethod
+    def between(
+        cls, initial: dict[str, Any], final: dict[str, Any] | None
+    ) -> "ResidualDelta":
+        initial_goals = {
+            goal["fingerprint"]
+            for goal in initial["goals"]
+            if goal.get("classification", {}).get("actionable", True)
+        }
+        if final is None:
+            return cls(initial["actionable_goal_count"], None)
+        final_goals = {
+            goal["fingerprint"]
+            for goal in final["goals"]
+            if goal.get("classification", {}).get("actionable", True)
+        }
+        return cls(
+            initial_actionable=initial["actionable_goal_count"],
+            final_actionable=final["actionable_goal_count"],
+            closed_fingerprints=tuple(sorted(initial_goals - final_goals)),
+            opened_fingerprints=tuple(sorted(final_goals - initial_goals)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "initial_actionable": self.initial_actionable,
+            "final_actionable": self.final_actionable,
+            "closed_fingerprints": list(self.closed_fingerprints),
+            "opened_fingerprints": list(self.opened_fingerprints),
+        }
+
+
+@dataclass(frozen=True)
+class ValidationCheck:
+    name: str
+    status: str
+    summary: str
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "status": self.status,
+            "summary": self.summary,
+            "details": self.details,
+        }
+
+
+@dataclass(frozen=True)
+class ValidationReport:
+    status: str
+    checks: tuple[ValidationCheck, ...]
+    residual_delta: ResidualDelta
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": "0.1",
+            "status": self.status,
+            "checks": [check.to_dict() for check in self.checks],
+            "residual_delta": self.residual_delta.to_dict(),
+        }

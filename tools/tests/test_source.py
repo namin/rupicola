@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from rupicola_llm.source import SourcePlanError, build_replay_plan, split_phrases
+from rupicola_llm.source import (
+    SourcePlanError,
+    build_replay_plan,
+    canonical_phrase,
+    split_phrases,
+)
 
 
 class SourceScannerTests(unittest.TestCase):
@@ -51,6 +56,16 @@ Abort.
     def test_reports_unterminated_comment(self) -> None:
         with self.assertRaisesRegex(SourcePlanError, "unterminated Rocq comment"):
             split_phrases("(* never closed")
+
+    def test_canonical_phrase_ignores_layout_but_preserves_string_spaces(self) -> None:
+        self.assertEqual(
+            'Definition message := "a  b".',
+            canonical_phrase('(* note *) Definition\n message := "a  b".'),
+        )
+        self.assertNotEqual(
+            canonical_phrase('Definition message := "a b".'),
+            canonical_phrase('Definition message := "a  b".'),
+        )
 
 
 if __name__ == "__main__":

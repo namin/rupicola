@@ -147,6 +147,41 @@ def _without_comments(text: str) -> str:
     return "".join(result)
 
 
+def canonical_phrase(text: str) -> str:
+    """Normalize layout and comments without changing string contents."""
+
+    clean = _without_comments(text)
+    result: list[str] = []
+    index = 0
+    in_string = False
+    pending_space = False
+    while index < len(clean):
+        char = clean[index]
+        following = clean[index + 1] if index + 1 < len(clean) else ""
+        if in_string:
+            result.append(char)
+            if char == '"':
+                if following == '"':
+                    result.append(following)
+                    index += 2
+                    continue
+                in_string = False
+            index += 1
+            continue
+        if char.isspace():
+            pending_space = bool(result)
+            index += 1
+            continue
+        if pending_space:
+            result.append(" ")
+            pending_space = False
+        result.append(char)
+        if char == '"':
+            in_string = True
+        index += 1
+    return "".join(result).strip()
+
+
 def _declares_theorem(text: str, theorem: str) -> bool:
     clean = _without_comments(text)
     escaped = re.escape(theorem)
@@ -159,7 +194,8 @@ def _declares_theorem(text: str, theorem: str) -> bool:
 
 
 def _is_proof_start(text: str) -> bool:
-    return re.fullmatch(r"\s*Proof(?:\s+using\s+[^.]*)?\s*\.\s*", _without_comments(text)) is not None
+    pattern = r"\s*Proof(?:\s+using\s+[^.]*)?\s*\.\s*"
+    return re.fullmatch(pattern, _without_comments(text)) is not None
 
 
 def _is_compile_phrase(text: str) -> bool:

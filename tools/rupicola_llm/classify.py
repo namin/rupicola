@@ -57,7 +57,10 @@ def classify_goal(goal: ProofGoal) -> ResidualClassification:
         return ResidualClassification(
             "semantic_invariant",
             "high" if "_spec" in conclusion else "medium",
-            tuple((["independent specification"] if "_spec" in conclusion else []) + semantic_signals),
+            tuple(
+                (["independent specification"] if "_spec" in conclusion else [])
+                + semantic_signals
+            ),
         )
 
     bound_signals = _contains(

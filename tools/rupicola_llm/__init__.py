@@ -1,4 +1,3 @@
-"""Read-only diagnostics for LLM-assisted Rupicola development."""
+"""Diagnostics and isolated candidate checking for LLM-assisted Rupicola."""
 
-__version__ = "0.1.0"
-
+__version__ = "0.2.0"

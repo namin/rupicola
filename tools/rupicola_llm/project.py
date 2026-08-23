@@ -22,6 +22,9 @@ class LoadPath:
     physical: Path
     logical: str
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "physical", self.physical.expanduser().resolve())
+
     def command_args(self) -> list[str]:
         return [self.flag, str(self.physical), self.logical]
 
@@ -82,6 +85,34 @@ class Project:
         ]
         args.extend(self.rocq_args)
         return args
+
+    def compile_args(self, source: Path) -> list[str]:
+        return [self.rocq, "compile", "-q", "-quiet", *self.rocq_args, str(source)]
+
+    def check_args(self, modules: list[str]) -> list[str]:
+        load_path_args = [
+            argument
+            for load_path in self.load_paths
+            for argument in load_path.command_args()
+        ]
+        return [self.rocq, "check", "-silent", *load_path_args, *modules]
+
+    def logical_name(self, source: Path) -> str:
+        source = source.resolve()
+        matches: list[tuple[int, LoadPath, Path]] = []
+        for load_path in self.load_paths:
+            try:
+                relative = source.relative_to(load_path.physical)
+            except ValueError:
+                continue
+            matches.append((len(load_path.physical.parts), load_path, relative))
+        if not matches:
+            raise ProjectError(f"source {source} is outside every configured Rocq load path")
+        _, load_path, relative = max(matches, key=lambda item: item[0])
+        if relative.suffix != ".v":
+            raise ProjectError(f"Rocq source does not end in .v: {source}")
+        components = (load_path.logical, *relative.with_suffix("").parts)
+        return ".".join(component for component in components if component)
 
     def resolve_library(self, library: str, suffix: str = ".vo") -> Path | None:
         candidates: list[Path] = []
@@ -145,6 +176,10 @@ def _find_root(start: Path) -> Path:
         if (candidate / "_CoqProject").is_file():
             return candidate
     raise ProjectError(f"could not find _CoqProject above {start}")
+
+
+def find_project_root(start: Path) -> Path:
+    return _find_root(start)
 
 
 def _parse_project_file(root: Path, project_file: Path) -> tuple[list[LoadPath], list[str]]:

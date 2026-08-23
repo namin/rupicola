@@ -59,7 +59,26 @@ class ProjectTests(unittest.TestCase):
         self.assertTrue(diagnostic.details["compiled_artifact_older"])
         self.assertEqual(str(compiled.resolve()), diagnostic.details["compiled_artifact"]["path"])
 
+    def test_maps_sources_to_logical_modules_for_kernel_checking(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_root = root / "src" / "Rupicola"
+            source = source_root / "Generated" / "Support.v"
+            source.parent.mkdir(parents=True)
+            source.write_text("Definition support := True.\n", encoding="utf-8")
+            project = Project(
+                root=root,
+                project_file=root / "_CoqProject",
+                load_paths=(LoadPath("-R", source_root, "Rupicola"),),
+                rocq_args=("-R", str(source_root), "Rupicola", "-w", "all"),
+                coqidetop="coqidetop",
+                rocq="rocq",
+            )
+            self.assertEqual("Rupicola.Generated.Support", project.logical_name(source))
+            check_args = project.check_args(["Rupicola.Generated.Support"])
+        self.assertIn("-R", check_args)
+        self.assertNotIn("-w", check_args)
+
 
 if __name__ == "__main__":
     unittest.main()
-
