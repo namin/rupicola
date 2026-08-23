@@ -3,11 +3,14 @@
 Status: proposed product architecture v1.  The companion experimental protocol
 is in [`LLM_EVAL.md`](LLM_EVAL.md).
 
-Implementation status: the read-only Phase 1 diagnostic and checker-first
+Implementation status: the read-only Phase 1 diagnostic and an executable
 Phase 2 slice are in [`tools/rupicola_llm`](tools/rupicola_llm/README.md).  The
-sidecar captures and classifies live residual goals, ranks local evidence, and
-can validate an externally supplied patch in isolation.  A model-provider
-adapter and bounded repair controller remain to complete Phase 2.
+sidecar captures and classifies live residual goals, ranks local evidence,
+offers a provider-neutral typed action protocol, runs a bounded repair
+controller, and validates every candidate in isolation.  A deterministic
+scripted provider exercises rejection followed by repair without calling a
+model.  A concrete LLM provider adapter, separate fast checker, clean
+second-workspace replay, `verify`, and explicit `apply` remain.
 
 ## 1. Product decision
 
@@ -297,6 +300,13 @@ finish(summary)
 The controller validates paths and arguments, applies patches only inside the
 candidate workspace, and records every action.  Checker commands are assembled
 by the project adapter rather than supplied as model-authored shell strings.
+
+The current prototype implements these calls as strict, versioned JSON-schema
+tools behind an `AgentProvider` protocol.  Its deterministic scripted adapter
+is an acceptance harness for controller behavior, not a simulated measure of
+model quality.  Until the separate fast checker exists, both requested check
+modes execute the stricter final validation pipeline and report that effective
+mode in the transcript.
 
 The repair loop is:
 

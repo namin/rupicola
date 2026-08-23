@@ -1,0 +1,56 @@
+{
+  "schema_version": "0.1",
+  "provider": "scripted",
+  "model": "byte-or-repair-fixture",
+  "actions": [
+    {
+      "tool": "search",
+      "arguments": {
+        "query": "expr_compile_byte_or",
+        "path": "src/Rupicola",
+        "max_results": 10
+      }
+    },
+    {
+      "tool": "read",
+      "arguments": {
+        "path": "src/Rupicola/Examples/LLMByteOrCompiler.v",
+        "start_line": 1,
+        "end_line": 55
+      }
+    },
+    {
+      "tool": "inspect_obligation",
+      "arguments": {
+        "id": "1",
+        "printing_mode": "raw"
+      }
+    },
+    {
+      "tool": "propose_patch",
+      "arguments": {
+        "patch_file": "unsafe_candidate.patch",
+        "rationale": "negative control: the policy must reject a new axiom"
+      }
+    },
+    {
+      "tool": "check",
+      "arguments": {
+        "mode": "fast"
+      }
+    },
+    {
+      "tool": "propose_patch",
+      "arguments": {
+        "patch_file": "byte_or_candidate.patch",
+        "rationale": "repair with the checked project-scoped Byte OR compiler extension"
+      }
+    },
+    {
+      "tool": "check",
+      "arguments": {
+        "mode": "final"
+      }
+    }
+  ]
+}

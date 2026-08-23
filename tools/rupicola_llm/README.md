@@ -1,11 +1,13 @@
 # `rupicola-llm` diagnostic and checked-solve prototype
 
-This directory implements Phase 1 and the checker-first slice of Phase 2 from
+This directory implements Phase 1 and a controller-first slice of Phase 2 from
 [`LLM_DESIGN.md`](../../LLM_DESIGN.md).  It can replay an incomplete Rupicola
-derivation, classify the residual goals left by the stock compiler, and check
-an externally supplied candidate patch in an isolated source copy.
+derivation, classify the residual goals left by the stock compiler, run a
+provider-neutral bounded repair loop, and check every candidate patch in an
+isolated source copy.
 
-It does not call an LLM or apply a proposal to the user's source tree yet.
+It has a deterministic scripted provider for controller acceptance tests.  It
+does not call a real LLM or apply a proposal to the user's source tree yet.
 
 ## Requirements
 
@@ -110,6 +112,54 @@ $ tools/rupicola-llm show <run-id>
 A rejected candidate exits with status `4` and retains the same evidence;
 project/source and environment failures retain statuses `2` and `3`.
 
+## Bounded agent workflow
+
+`solve --agent-script` runs typed provider actions through the bounded
+controller.  The included Byte OR fixture searches and reads a relevant local
+compiler analogue, inspects the live obligation, proposes an unsafe axiom as a
+negative control, observes its policy rejection, and repairs it with the
+verified project extension:
+
+```console
+$ tools/rupicola-llm solve \
+    src/Rupicola/Examples/LLMByteOrBaseline.v \
+    --theorem baseline_byte_or_scalar_br2fn_ok \
+    --agent-script tools/tests/fixtures/byte_or_agent.json \
+    --scope project \
+    --max-actions 8 \
+    --max-checks 2
+
+Run 20260823-001234-baseline-byte-or-scalar-br2fn-ok-0123abcd
+  status:    verified
+  residuals: 1 -> 0
+  proposal:  .../.rupicola/llm/runs/.../proposal.patch
+  source tree unchanged; proposal is ready for review
+```
+
+The provider interface exposes only seven typed actions: `search`, `read`,
+`inspect_obligation`, `propose_patch`, `check`, `revert_candidate`, and
+`finish`.  Repository reads are restricted to disclosed Rocq source roots,
+patches are parsed and scope-checked before checking, and checker commands are
+never provider-authored.  Exact checker-failed patch digests are not checked
+twice.  The action, check, and wall-time budgets are configurable and recorded.
+
+The scripted provider consumes a versioned JSON `actions` array.  Its
+`patch_file` shorthand is resolved only below the script directory and expanded
+to the same `unified_diff` argument a future model adapter must return.  It is a
+deterministic development adapter, not an LLM substitute.
+
+Each controller run retains `context.initial.json`, `tools.json`,
+patch-redacted `events.jsonl`, append-only `attempts.jsonl`, every exact
+proposal, nested checker runs and logs, the selected `proposal.patch`,
+`validation.json`, and a human-readable summary.  Proposal bodies stay out of
+the action transcript but remain available as separately hashed artifacts.  A
+provider failure exits with status `5`; an exhausted, rejected, or unsolved run
+exits with status `4`.
+
+Both `fast` and `final` are accepted protocol modes in this slice, but `fast`
+currently executes and reports the stricter final pipeline.  This preserves
+the trust boundary while a genuinely incremental checker is still pending.
+
 ## Stale build artifacts
 
 If Rocq reports inconsistent compiled assumptions, the command resolves both
@@ -135,9 +185,10 @@ $ RUPICOLA_LLM_CALIBRATION=1 tools/test-rupicola-llm -v
 ```
 
 The calibration assertions require one byte-OR gap, two count-byte gaps, three
-find-byte gaps, stable fingerprints across fresh proof sessions, and a Byte OR
+find-byte gaps, stable fingerprints across fresh proof sessions, a Byte OR
 candidate that passes the isolated compile, kernel, assumptions, and unchanged
-source-tree gates.
+source-tree gates, and a live two-attempt agent run that rejects an axiom before
+verifying its repaired patch.
 
 ## Current limitations
 
@@ -163,5 +214,9 @@ source-tree gates.
   output.
 - Run metadata pins repository and submodule commits, but does not yet hash the
   complete compiled dependency closure.
-- Model calls, bounded repair, clean second-workspace replay, `verify`, and
-  explicit `apply` remain later Phase 2 work.
+- The provider-neutral controller and deterministic scripted adapter are
+  implemented, but a concrete LLM adapter and first-remote-run disclosure flow
+  are not.
+- Each attempt starts from a fresh isolated source copy, but the additional
+  final replay in a distinct second workspace remains to be implemented.
+- `verify` and explicit `apply` remain later Phase 2 work.

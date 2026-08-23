@@ -7,6 +7,8 @@ import sys
 from typing import Sequence
 
 from . import __version__
+from .agent import solve_with_agent
+from .agent_protocol import AgentProtocolError, ScriptedProvider
 from .diagnose import diagnose, format_human
 from .project import ProjectError, find_project_root
 from .runs import RunStore, RunStoreError, default_runs_root
@@ -46,11 +48,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     solve_parser.add_argument("file", type=Path, help="Rocq source containing the proof")
     solve_parser.add_argument("--theorem", required=True, help="the theorem to solve")
-    solve_parser.add_argument(
+    proposal_source = solve_parser.add_mutually_exclusive_group(required=True)
+    proposal_source.add_argument(
         "--candidate-patch",
-        required=True,
         type=Path,
         help="unified diff proposed by a deterministic or model provider",
+    )
+    proposal_source.add_argument(
+        "--agent-script",
+        type=Path,
+        help="deterministic JSON action script for the bounded agent controller",
     )
     solve_parser.add_argument(
         "--scope", choices=("local", "project"), default="local"
@@ -59,6 +66,9 @@ def _parser() -> argparse.ArgumentParser:
     solve_parser.add_argument("--runs-root", type=Path, help=argparse.SUPPRESS)
     solve_parser.add_argument("--timeout", type=float, default=120.0)
     solve_parser.add_argument("--rationale", help="proposal rationale recorded with the run")
+    solve_parser.add_argument("--max-actions", type=int, default=24)
+    solve_parser.add_argument("--max-checks", type=int, default=3)
+    solve_parser.add_argument("--wall-seconds", type=float, default=900.0)
     solve_parser.add_argument("--json", action="store_true")
 
     show_parser = subparsers.add_parser("show", help="show a persisted solve run")
@@ -85,16 +95,40 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(format_human(result))
         return exit_code
     if args.command == "solve":
-        result, exit_code = solve_with_patch(
-            args.file,
-            args.theorem,
-            args.candidate_patch,
-            scope=args.scope,
-            project_root=args.project_root,
-            runs_root=args.runs_root,
-            timeout_seconds=args.timeout,
-            rationale=args.rationale,
-        )
+        if args.agent_script is not None:
+            try:
+                provider = ScriptedProvider.load(args.agent_script)
+            except AgentProtocolError as error:
+                result = {
+                    "schema_version": "0.1",
+                    "status": "error",
+                    "message": str(error),
+                }
+                exit_code = 2
+            else:
+                result, exit_code = solve_with_agent(
+                    args.file,
+                    args.theorem,
+                    provider,
+                    scope=args.scope,
+                    project_root=args.project_root,
+                    runs_root=args.runs_root,
+                    timeout_seconds=args.timeout,
+                    max_actions=args.max_actions,
+                    max_checks=args.max_checks,
+                    wall_seconds=args.wall_seconds,
+                )
+        else:
+            result, exit_code = solve_with_patch(
+                args.file,
+                args.theorem,
+                args.candidate_patch,
+                scope=args.scope,
+                project_root=args.project_root,
+                runs_root=args.runs_root,
+                timeout_seconds=args.timeout,
+                rationale=args.rationale,
+            )
         if args.json:
             print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         else:

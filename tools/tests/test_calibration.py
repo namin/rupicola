@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
 import tempfile
 import unittest
 
+from rupicola_llm.agent import solve_with_agent
+from rupicola_llm.agent_protocol import ScriptedProvider
 from rupicola_llm.diagnose import diagnose
 from rupicola_llm.solve import solve_with_patch
 
@@ -119,6 +122,48 @@ class CalibrationTests(unittest.TestCase):
             self.assertEqual("failed", checks["source_policy"])
             self.assertEqual("skipped", checks["candidate_compile"])
             self.assertEqual("passed", checks["source_tree_unchanged"])
+
+    def test_scripted_agent_repairs_rejected_patch_and_verifies_byte_or(self) -> None:
+        target = ROOT / self.CASES[0][0]
+        before = hashlib.sha256(target.read_bytes()).hexdigest()
+        fixture = ROOT / "tools/tests/fixtures/byte_or_agent.json"
+        provider = ScriptedProvider.load(fixture)
+        with tempfile.TemporaryDirectory() as temporary:
+            result, exit_code = solve_with_agent(
+                target,
+                self.CASES[0][1],
+                provider,
+                scope="project",
+                runs_root=Path(temporary) / "runs",
+                timeout_seconds=30,
+                max_actions=8,
+                max_checks=2,
+                wall_seconds=120,
+            )
+            run_directory = Path(result["run_directory"])
+            self.assertEqual(0, exit_code, result)
+            self.assertEqual("verified", result["status"])
+            self.assertEqual(7, result["agent"]["actions_used"])
+            self.assertEqual(2, result["agent"]["checks_used"])
+            attempts = [
+                json.loads(line)
+                for line in (run_directory / "attempts.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(
+                ["rejected", "verified"],
+                [attempt["validation_status"] for attempt in attempts],
+            )
+            events = [
+                json.loads(line)
+                for line in (run_directory / "events.jsonl").read_text().splitlines()
+            ]
+            self.assertTrue(events[4]["observation"]["candidate_reverted"])
+            self.assertEqual("source_policy", events[4]["observation"]["first_failed_check"])
+            self.assertNotIn("unified_diff", events[3]["action"]["arguments"])
+            self.assertTrue((run_directory / "proposal.patch").is_file())
+            self.assertFalse((run_directory / "workspace").exists())
+        after = hashlib.sha256(target.read_bytes()).hexdigest()
+        self.assertEqual(before, after)
 
 
 if __name__ == "__main__":
