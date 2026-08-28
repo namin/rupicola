@@ -1,5 +1,6 @@
 Require Import Rupicola.Examples.CMove.CMove.
 Require Import Rupicola.Examples.Cells.Cells.
+Require Import Rupicola.Lib.ConstantTime.
 From Stdlib Require Import ZArith.ZArith Strings.String Lia.
 Require Import coqutil.Word.Bitwidth coqutil.Word.Interface.
 Require Import coqutil.Word.Properties.
@@ -16,21 +17,6 @@ Import LeakageProgramLogic.Coercions.
 Import SeparationLogic.
 Local Open Scope string_scope.
 Local Open Scope list_scope.
-
-(* Keep symbolic execution from eagerly decomposing a loop invariant.  The
-   sealed implementation is logically the identity, but tactics cannot unfold
-   it while executing the generated loop body. *)
-Module Type LeakageProofFenceSig.
-  Parameter t : Prop -> Prop.
-  Parameter intro : forall P, P -> t P.
-  Parameter elim : forall P, t P -> P.
-End LeakageProofFenceSig.
-
-Module LeakageProofFence : LeakageProofFenceSig.
-  Definition t (P : Prop) : Prop := P.
-  Definition intro P : P -> t P := fun H => H.
-  Definition elim P : t P -> P := fun H => H.
-End LeakageProofFence.
 
 Section WithParameters.
   Context {width: Z} {BW: Bitwidth width}.
@@ -71,16 +57,6 @@ Section WithParameters.
             (rewrite ?map.get_put_dec, ?map.get_empty,
                      ?word.of_Z_unsigned; cbn)).
 
-  Local Ltac normalize_generated_map_get :=
-    repeat first
-      [ rewrite map.get_put_dec
-      | rewrite map.get_remove_dec
-      | rewrite map.get_empty
-      | match goal with
-        | |- context [@map.get _ _ _ ?m _] =>
-            is_var m; cbv delta [m]
-        end ].
-
   Definition cmove_word_leakage_spec : spec_of "cmove_word" :=
     fnspec! "cmove_word" (mask ptr1 ptr2 : word) /
       (c1 c2 : cell) (R : mem -> Prop),
@@ -119,19 +95,6 @@ Section WithParameters.
     prove_word_leakage.
   Qed.
 
-  Definition word_array_stride : word :=
-    word.of_Z (Z.of_nat (@Memory.bytes_per width Syntax.access_size.word)).
-
-  Definition word_array_index (base : word) (i : nat) : word :=
-    word.add base
-      (word.of_Z (word.unsigned word_array_stride * Z.of_nat i)).
-
-  Definition initialized_word (addr : word) (_ : unit) : mem -> Prop :=
-    Lift1Prop.ex1 (fun value => Scalars.scalar addr value).
-
-  Definition initialized_word_array (base : word) (n : nat) : mem -> Prop :=
-    Array.array initialized_word word_array_stride base (List.repeat tt n).
-
   Definition array_loop_locals
       (mask len ptr1 ptr2 from nmask index : word) : locals :=
     map.put
@@ -149,39 +112,6 @@ Section WithParameters.
         "_gs_from0" index)
       "_gs_to0" len.
 
-  Lemma word_of_Z_nat_succ i :
-    (word.add (word.of_Z (Z.of_nat i)) (word.of_Z 1) : word) =
-    word.of_Z (Z.of_nat (S i)).
-  Proof.
-    rewrite <- word.ring_morph_add.
-    f_equal; lia.
-  Qed.
-
-  Lemma word_array_index_as_mul base i :
-    word_array_index base i =
-    word.add base (word.mul word_array_stride (word.of_Z (Z.of_nat i))).
-  Proof.
-    unfold word_array_index.
-    rewrite word.ring_morph_mul, word.of_Z_unsigned.
-    reflexivity.
-  Qed.
-
-  Lemma initialized_word_array_index base n i (H : (i < n)%nat) :
-    Lift1Prop.iff1
-      (initialized_word_array base n)
-      (Array.array initialized_word word_array_stride base
-         (List.firstn i (List.repeat tt n))
-       * (initialized_word (word_array_index base i)
-            (List.hd tt (List.skipn i (List.repeat tt n)))
-          * Array.array initialized_word word_array_stride
-              (word.add (word_array_index base i) word_array_stride)
-              (List.skipn (S i) (List.repeat tt n))))%sep.
-  Proof.
-    unfold initialized_word_array, word_array_index.
-    eapply Array.array_index_nat_inbounds.
-    rewrite List.repeat_length; exact H.
-  Qed.
-
   Definition cmove_array_one_iteration_leakage
       (ptr1 ptr2 : word) (i : nat) : leakage :=
     [leak_word (word_array_index ptr1 i);
@@ -189,18 +119,15 @@ Section WithParameters.
      leak_word (word_array_index ptr1 i);
      leak_bool true].
 
-  Fixpoint cmove_array_iterations_leakage
+  Definition cmove_array_iterations_leakage
       (ptr1 ptr2 : word) (count : nat) : leakage :=
-    match count with
-    | O => []
-    | S count' =>
-        cmove_array_one_iteration_leakage ptr1 ptr2 count' ++
-        cmove_array_iterations_leakage ptr1 ptr2 count'
-    end.
+    public_loop_iterations_leakage
+      (cmove_array_one_iteration_leakage ptr1 ptr2) count.
 
   Definition cmove_array_public_leakage
       (ptr1 ptr2 : word) (n : nat) : leakage :=
-    leak_bool false :: cmove_array_iterations_leakage ptr1 ptr2 n.
+    public_loop_leakage
+      (cmove_array_one_iteration_leakage ptr1 ptr2) n.
 
   Definition cswap_array_one_iteration_leakage
       (ptr1 ptr2 : word) (i : nat) : leakage :=
@@ -210,18 +137,15 @@ Section WithParameters.
      leak_word (word_array_index ptr1 i);
      leak_bool true].
 
-  Fixpoint cswap_array_iterations_leakage
+  Definition cswap_array_iterations_leakage
       (ptr1 ptr2 : word) (count : nat) : leakage :=
-    match count with
-    | O => []
-    | S count' =>
-        cswap_array_one_iteration_leakage ptr1 ptr2 count' ++
-        cswap_array_iterations_leakage ptr1 ptr2 count'
-    end.
+    public_loop_iterations_leakage
+      (cswap_array_one_iteration_leakage ptr1 ptr2) count.
 
   Definition cswap_array_public_leakage
       (ptr1 ptr2 : word) (n : nat) : leakage :=
-    leak_bool false :: cswap_array_iterations_leakage ptr1 ptr2 n.
+    public_loop_leakage
+      (cswap_array_one_iteration_leakage ptr1 ptr2) n.
 
   Definition cmove_array_leakage_spec : spec_of "cmove_array" :=
     fnspec! "cmove_array" (mask len ptr1 ptr2 : word) /
@@ -394,10 +318,11 @@ Section WithParameters.
                  cmove_array_iterations_leakage ptr1 ptr2 i ++ k =
                cmove_array_iterations_leakage ptr1 ptr2 (S i) ++ k)
         end.
+        rewrite Hstride.
         cbn [cmove_array_iterations_leakage
+             public_loop_iterations_leakage
              cmove_array_one_iteration_leakage List.app].
         repeat rewrite word_array_index_as_mul.
-        rewrite <- Hstride.
         reflexivity.
       - SeparationLogic.seprewrite
           (initialized_word_array_index ptr1 n i Hlt).
@@ -578,10 +503,11 @@ Section WithParameters.
                  cswap_array_iterations_leakage ptr1 ptr2 i ++ k =
                cswap_array_iterations_leakage ptr1 ptr2 (S i) ++ k)
         end.
+        rewrite Hstride.
         cbn [cswap_array_iterations_leakage
+             public_loop_iterations_leakage
              cswap_array_one_iteration_leakage List.app].
         repeat rewrite word_array_index_as_mul.
-        rewrite <- Hstride.
         reflexivity.
       - SeparationLogic.seprewrite
           (initialized_word_array_index ptr1 n i Hlt).

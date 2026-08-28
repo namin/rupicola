@@ -1,7 +1,7 @@
 # A constant-time domain for Rupicola
 
-Status: selected direction, with exact leakage proofs implemented for the word
-and public-length array conditional-move/swap kernels.
+Status: working domain slice, with reusable support plus functional and exact
+leakage proofs for conditional move/swap and a public-length mismatch scan.
 
 ## 1. Decision
 
@@ -123,6 +123,40 @@ the exact accumulated trace, and a decreasing public loop measure.  Both array
 theorems are closed under Rocq's global context: no admitted facts or added
 axioms are used.
 
+The reusable pieces now live in
+[`src/Rupicola/Lib/ConstantTime.v`](src/Rupicola/Lib/ConstantTime.v):
+
+- content-agnostic initialized-word and initialized-array predicates;
+- public word-array stride and address normalization;
+- a generic reverse-order trace constructor for public-bound loops;
+- generated-locals normalization; and
+- a sealed proof fence for executing one generated loop body at a time.
+
+`CMoveLeakage.v` imports this module rather than defining those pieces locally.
+As a cross-example check,
+[`src/Rupicola/Examples/ConstantTime/MemcpyLeakage.v`](src/Rupicola/Examples/ConstantTime/MemcpyLeakage.v)
+certifies the existing, functionally verified `sizedlist_memcpy_br2fn`.  Each
+successful iteration has the public-only reverse trace
+`[store dst[i]; load src[i]; loop true]`.  This matters because `memcpy` was not
+created for the constant-time case study: the support layer applies to an
+independent Rupicola-generated loop.
+
+The first new scan kernel is in
+[`src/Rupicola/Examples/ConstantTime/ArrayXorDiff.v`](src/Rupicola/Examples/ConstantTime/ArrayXorDiff.v).
+`array_xor_diff` traverses two public-length word arrays without early exit and
+accumulates the bitwise OR of pairwise XORs.  Its generated function has both:
+
+- `array_xor_diff_br2fn_ok`, the ordinary Rupicola functional certificate; and
+- `array_xor_diff_leakage_ok` in
+  [`ArrayXorDiffLeakage.v`](src/Rupicola/Examples/ConstantTime/ArrayXorDiffLeakage.v),
+  whose iteration trace is `[load a2[i]; load a1[i]; loop true]`.
+
+The accumulator and both arrays' contents are arbitrary secrets in the leakage
+proof.  This is the scan core of an equality/zero-test primitive.  It does not
+yet certify the separate conversion from a zero accumulator to a Boolean or
+all-ones mask; keeping that boundary explicit avoids silently assuming that a
+target-level comparison or shift is constant time.
+
 ## 5. Proposed domain shape
 
 Version 0 should remain small and explicit.
@@ -176,25 +210,29 @@ target language.
 
 1. **Public-length arrays (complete).** Exact public-only traces are proved for
    both `cmove_array_br2fn` and `cswap_array_br2fn`.
-2. **Reusable trace lemmas (next).** Factor the proof pattern currently local to
-   `CMoveLeakage.v` into a small constant-time support module.
-3. **Two-run interface.** Define public equivalence and derive a theorem saying
+2. **Reusable trace foundation (complete).** Shared predicates, address
+   normalization, public-loop trace construction, locals normalization, and
+   proof fencing are factored into `Rupicola.Lib.ConstantTime` and reused by an
+   independent generated `memcpy` loop.
+3. **Two-run interface (next).** Define public equivalence and derive a theorem saying
    that equal public inputs imply equal leakage traces, even when all secret
    inputs and initial secret contents differ.
-4. **One additional kernel.** Add a fixed/public-length byte-array equality or
-   zero test.  This checks that the domain is useful beyond the original
-   CMove example.
+4. **One additional kernel (scan core complete).** The public-length
+   `array_xor_diff` kernel has functional and exact leakage certificates.  Next,
+   specify its zero/equality meaning and add a target-appropriate constant-time
+   zero-to-mask wrapper.
 5. **Negative examples.** Keep small secret-branch, secret-index, and
    variable-shift implementations whose leakage goals intentionally fail.
 6. **Downstream story.** Identify the Bedrock2-to-machine-code path on which a
    leakage-preservation theorem can be reused or added.
 
-The array proofs exposed the pieces that belong in the reusable layer: an
-initialized-but-content-agnostic array predicate, address/stride
-normalization, a public-loop invariant interface, generated-locals
-normalization, and a way to keep symbolic execution from prematurely opening
-the next loop invariant.  The immediate target is to factor those pieces and
-then use them on the first non-CMove kernel.
+The immediate proof-engineering target is now a higher-level public-loop
+interface that removes the remaining invariant boilerplate.  The immediate
+domain target is the zero/equality specification around `array_xor_diff`.
+Together, those give a useful next test for LLM assistance: propose the wrapper
+and proof plan, while Rocq rejects any implementation whose comparison,
+control flow, address calculation, or modeled variable-time operand reveals
+the secret accumulator.
 
 ## 7. Where an LLM helps later
 
