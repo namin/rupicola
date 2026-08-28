@@ -59,6 +59,10 @@ Chose your own adventure below:
 
 -  Watch the `Rupicola thesis defense <https://youtu.be/BG3RXB8hZo4>`__,
 
+-  Read the `constant-time domain design <CONSTANT_TIME_DESIGN.md>`__ and the
+   first checked Bedrock2 leakage certificates in
+   ``src/Rupicola/Examples/ConstantTime/CMoveLeakage.v``.
+
 -  Explore the experimental, kernel-checked LLM proof-repair sidecar in the
    self-contained `hands-on tutorial <LLM_TUTORIAL.md>`__, then use the
    `rupicola-llm command reference <tools/rupicola_llm/README.md>`__ and read
@@ -115,6 +119,9 @@ A modern pseudorandom number generator
 Memory cells
   ``src/Rupicola/Examples/Cells/Cells.v``,
   ``src/Rupicola/Examples/Cells/IndirectAdd.v``
+Constant-time conditional move and swap
+  ``src/Rupicola/Examples/CMove/CMove.v``,
+  ``src/Rupicola/Examples/ConstantTime/CMoveLeakage.v``
 Nondeterminism
   ``src/Rupicola/Examples/Nondeterminism/StackAlloc.v``,
   ``src/Rupicola/Examples/Nondeterminism/Peek.v``
