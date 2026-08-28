@@ -535,4 +535,53 @@ Section WithParameters.
     - rewrite HK; reflexivity.
     - exact HT.
   Qed.
+
+  Lemma cmove_array_exact_call_leakage
+      functions mask len ptr1 ptr2 n R k t m
+      (Hfunction :
+         map.get functions "cmove_array" =
+           Some (@cmove_array_br2fn width word))
+      (Hpre :
+         word.unsigned len = Z.of_nat n /\
+         (initialized_word_array ptr1 n
+          * initialized_word_array ptr2 n * R)%sep m) :
+    exact_call_leakage functions "cmove_array"
+      [mask; len; ptr1; ptr2] k t m
+      (cmove_array_public_leakage ptr1 ptr2 n).
+  Proof.
+    pose proof cmove_array_leakage_ok as Hspec.
+    cbv [LeakageProgramLogic.program_logic_goal_for] in Hspec.
+    specialize
+      (Hspec functions Hfunction mask len ptr1 ptr2 n R k t m Hpre).
+    unfold exact_call_leakage.
+    eapply LeakageSemantics.weaken_call; [exact Hspec|].
+    intros final t' m' rets (Hrets & Hfinal & Htrace).
+    exact Hfinal.
+  Qed.
+
+  (** The masks and all initialized array contents are secret and may differ
+      between runs.  Only the public length and base addresses are shared. *)
+  Lemma cmove_array_leakage_noninterference
+      functions mask1 mask2 len ptr1 ptr2 n k t1 t2 m1 m2 R1 R2
+      (Hfunction :
+         map.get functions "cmove_array" =
+           Some (@cmove_array_br2fn width word))
+      (Hlen : word.unsigned len = Z.of_nat n)
+      (Hmem1 :
+         (initialized_word_array ptr1 n
+          * initialized_word_array ptr2 n * R1)%sep m1)
+      (Hmem2 :
+         (initialized_word_array ptr1 n
+          * initialized_word_array ptr2 n * R2)%sep m2) :
+    call_leakage_two_run functions "cmove_array"
+      [mask1; len; ptr1; ptr2] [mask2; len; ptr1; ptr2]
+      k t1 t2 m1 m2.
+  Proof.
+    eapply exact_call_leakage_two_run
+      with (delta1 := cmove_array_public_leakage ptr1 ptr2 n)
+           (delta2 := cmove_array_public_leakage ptr1 ptr2 n).
+    - reflexivity.
+    - eapply cmove_array_exact_call_leakage; eauto.
+    - eapply cmove_array_exact_call_leakage; eauto.
+  Qed.
 End WithParameters.

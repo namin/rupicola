@@ -1,7 +1,8 @@
 # A constant-time domain for Rupicola
 
-Status: working domain slice, with reusable support plus functional and exact
-leakage proofs for conditional move/swap and a public-length mismatch scan.
+Status: working domain slice, with reusable unary and two-run support plus
+functional and exact leakage proofs for conditional move/swap and a
+public-length mismatch scan.
 
 ## 1. Decision
 
@@ -157,6 +158,23 @@ yet certify the separate conversion from a zero accumulator to a Boolean or
 all-ones mask; keeping that boundary explicit avoids silently assuming that a
 target-level comparison or shift is constant time.
 
+The support module also exposes the relational security interface:
+
+- `exact_call_leakage` packages a unary Bedrock2 call whose final leakage is an
+  explicit public delta appended to the initial leakage;
+- `call_leakage_two_run` pairs two Bedrock2 calls as a product-program judgment
+  and requires their final leakage traces to agree; and
+- `exact_call_leakage_two_run` derives the relational judgment from two unary
+  certificates whose public deltas are equal.
+
+This is instantiated in two deliberately different ways.  In
+`cmove_array_leakage_noninterference`, the two calls share only the public
+length and base addresses: their masks, memories, framed predicates, and prior
+interaction traces may differ.  In
+`array_xor_diff_leakage_noninterference`, the two memories may contain unrelated
+array contents and produce different internal accumulators and return values.
+The theorem still forces equal leakage from equal public length and bases.
+
 ## 5. Proposed domain shape
 
 Version 0 should remain small and explicit.
@@ -214,9 +232,10 @@ target language.
    normalization, public-loop trace construction, locals normalization, and
    proof fencing are factored into `Rupicola.Lib.ConstantTime` and reused by an
    independent generated `memcpy` loop.
-3. **Two-run interface (next).** Define public equivalence and derive a theorem saying
-   that equal public inputs imply equal leakage traces, even when all secret
-   inputs and initial secret contents differ.
+3. **Two-run interface (complete).** The generic product-program judgment is
+   derived from exact unary traces and instantiated for both a differing secret
+   scalar mask (`cmove_array`) and differing secret array contents
+   (`array_xor_diff`).
 4. **One additional kernel (scan core complete).** The public-length
    `array_xor_diff` kernel has functional and exact leakage certificates.  Next,
    specify its zero/equality meaning and add a target-appropriate constant-time
