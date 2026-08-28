@@ -1,6 +1,7 @@
 # A constant-time domain for Rupicola
 
-Status: selected direction, with the first feasibility proof implemented.
+Status: selected direction, with exact leakage proofs implemented for the word
+and public-length array conditional-move/swap kernels.
 
 ## 1. Decision
 
@@ -73,7 +74,7 @@ performed by an unverified downstream C compiler.  An end-to-end physical
 timing claim would additionally need leakage-preserving lowering to the final
 machine code and an appropriate hardware model.
 
-## 4. First checked slice
+## 4. Checked slice
 
 The existing CMove example already contains the right functional vocabulary:
 
@@ -83,7 +84,7 @@ The existing CMove example already contains the right functional vocabulary:
 
 [`src/Rupicola/Examples/ConstantTime/CMoveLeakage.v`](src/Rupicola/Examples/ConstantTime/CMoveLeakage.v)
 adds leakage specifications and checked proofs for those same generated
-functions.
+functions, including `cmove_array_br2fn` and `cswap_array_br2fn`.
 
 The results are:
 
@@ -100,6 +101,27 @@ map, external specification, and stack-pointer choice.
 This is the key feasibility result: the functional compiler output can be
 checked directly with Bedrock2's leakage program logic.  We do not need to
 replace Rupicola's compiler or trust a syntactic scan for branches.
+
+The public-length array milestone is now checked as well.  If `a[i]` denotes
+the public address of element `i`, each successful loop iteration prepends the
+following events:
+
+| Function | Per-iteration Bedrock2 leakage list |
+|---|---|
+| `cmove_array` | `[store a1[i]; load a2[i]; load a1[i]; loop true]` |
+| `cswap_array` | `[store a2[i]; store a1[i]; load a2[i]; load a1[i]; loop true]` |
+
+The complete trace starts with `loop false`, followed by those blocks for
+indices `n - 1` down to `0`, because leakage events are prepended.  The proofs
+compute every address from only the two public base pointers, the public word
+stride, and the public length.  They quantify over arbitrary masks and over
+arbitrary initialized word contents; neither can affect the trace.
+
+This closes the first compositionality test.  The proof maintains two framed
+array predicates across loads and stores, a canonical generated-locals state,
+the exact accumulated trace, and a decreasing public loop measure.  Both array
+theorems are closed under Rocq's global context: no admitted facts or added
+axioms are used.
 
 ## 5. Proposed domain shape
 
@@ -152,10 +174,9 @@ target language.
 
 ## 6. Next milestones
 
-1. **Public-length arrays.** Prove an exact trace for `cmove_array_br2fn` and
-   `cswap_array_br2fn`.  This exercises loop leakage and is the first real test
-   of compositionality.
-2. **Reusable trace lemmas.** Factor the proof pattern currently local to
+1. **Public-length arrays (complete).** Exact public-only traces are proved for
+   both `cmove_array_br2fn` and `cswap_array_br2fn`.
+2. **Reusable trace lemmas (next).** Factor the proof pattern currently local to
    `CMoveLeakage.v` into a small constant-time support module.
 3. **Two-run interface.** Define public equivalence and derive a theorem saying
    that equal public inputs imply equal leakage traces, even when all secret
@@ -168,9 +189,12 @@ target language.
 6. **Downstream story.** Identify the Bedrock2-to-machine-code path on which a
    leakage-preservation theorem can be reused or added.
 
-The immediate next technical target is milestone 1: arrays force us to state
-the public-bound loop invariant and will tell us what belongs in a reusable
-domain library.
+The array proofs exposed the pieces that belong in the reusable layer: an
+initialized-but-content-agnostic array predicate, address/stride
+normalization, a public-loop invariant interface, generated-locals
+normalization, and a way to keep symbolic execution from prematurely opening
+the next loop invariant.  The immediate target is to factor those pieces and
+then use them on the first non-CMove kernel.
 
 ## 7. Where an LLM helps later
 
