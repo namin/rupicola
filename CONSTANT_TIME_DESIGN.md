@@ -2,7 +2,7 @@
 
 Status: working domain slice, with reusable unary and two-run support plus
 functional and exact leakage proofs for conditional move/swap and a
-public-length mismatch scan.
+public-length mismatch scan whose zero/equality meaning is also certified.
 
 ## 1. Decision
 
@@ -145,18 +145,23 @@ independent Rupicola-generated loop.
 The first new scan kernel is in
 [`src/Rupicola/Examples/ConstantTime/ArrayXorDiff.v`](src/Rupicola/Examples/ConstantTime/ArrayXorDiff.v).
 `array_xor_diff` traverses two public-length word arrays without early exit and
-accumulates the bitwise OR of pairwise XORs.  Its generated function has both:
+accumulates the bitwise OR of pairwise XORs.  It now has three complementary
+certificates:
 
-- `array_xor_diff_br2fn_ok`, the ordinary Rupicola functional certificate; and
+- `array_xor_diff_br2fn_ok`, the ordinary Rupicola functional certificate;
+- `array_xor_diff_zero_iff`, the semantic certificate that, under the same
+  full-array length conditions, the result is zero exactly when the arrays are
+  equal; and
 - `array_xor_diff_leakage_ok` in
   [`ArrayXorDiffLeakage.v`](src/Rupicola/Examples/ConstantTime/ArrayXorDiffLeakage.v),
   whose iteration trace is `[load a2[i]; load a1[i]; loop true]`.
 
 The accumulator and both arrays' contents are arbitrary secrets in the leakage
-proof.  This is the scan core of an equality/zero-test primitive.  It does not
-yet certify the separate conversion from a zero accumulator to a Boolean or
-all-ones mask; keeping that boundary explicit avoids silently assuming that a
-target-level comparison or shift is constant time.
+proof.  Together, the three theorems establish the scan core as a functional
+equality primitive with content-independent leakage.  They do not yet certify
+the separate conversion from a zero accumulator to a Boolean or all-ones mask;
+keeping that boundary explicit avoids silently assuming that a target-level
+comparison or shift is constant time.
 
 The support module also exposes the relational security interface:
 
@@ -236,10 +241,10 @@ target language.
    derived from exact unary traces and instantiated for both a differing secret
    scalar mask (`cmove_array`) and differing secret array contents
    (`array_xor_diff`).
-4. **One additional kernel (scan core complete).** The public-length
-   `array_xor_diff` kernel has functional and exact leakage certificates.  Next,
-   specify its zero/equality meaning and add a target-appropriate constant-time
-   zero-to-mask wrapper.
+4. **One additional kernel (semantic scan core complete).** The public-length
+   `array_xor_diff` kernel has functional, zero/equality, and exact leakage
+   certificates.  Next, add a target-appropriate constant-time zero-to-mask
+   wrapper.
 5. **Negative examples.** Keep small secret-branch, secret-index, and
    variable-shift implementations whose leakage goals intentionally fail.
 6. **Downstream story.** Identify the Bedrock2-to-machine-code path on which a
@@ -247,11 +252,10 @@ target language.
 
 The immediate proof-engineering target is now a higher-level public-loop
 interface that removes the remaining invariant boilerplate.  The immediate
-domain target is the zero/equality specification around `array_xor_diff`.
-Together, those give a useful next test for LLM assistance: propose the wrapper
-and proof plan, while Rocq rejects any implementation whose comparison,
-control flow, address calculation, or modeled variable-time operand reveals
-the secret accumulator.
+domain target is now the zero-to-mask wrapper around `array_xor_diff`.  This is
+a useful next test for LLM assistance: propose the wrapper and proof plan,
+while Rocq rejects any implementation whose comparison, control flow, address
+calculation, or modeled variable-time operand reveals the secret accumulator.
 
 ## 7. Where an LLM helps later
 
